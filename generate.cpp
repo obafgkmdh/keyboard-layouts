@@ -69,8 +69,8 @@ inline unsigned int hash2(bitset x) {
 	return clz(x) | (ctz(x) << 5);
 }
 
-std::vector<count> bigrams((ALPHA_LEN - 1) * 32 + (33 - ALPHA_LEN));
-std::vector<count> skipgrams((ALPHA_LEN - 1) * 32 + (33 - ALPHA_LEN));
+std::array<count, (ALPHA_LEN - 1) * 32 + (33 - ALPHA_LEN)> bigrams;
+std::array<count, (ALPHA_LEN - 1) * 32 + (33 - ALPHA_LEN)> skipgrams;
 count totalBigrams, totalSkipgrams;
 count cutoffSfb, cutoffSfs;
 
@@ -123,7 +123,7 @@ void loadCorpus(std::string fn) {
 // sfb of each group of 3, bucketed by first char in each group
 std::array<std::vector<paired>, ALPHA_LEN> groups3;
 // sfs of each group of 3
-std::vector<count> groups3_sfs((33 - ALPHA_LEN) + ((ALPHA_LEN - 3) << 10));
+std::array<count, (33 - ALPHA_LEN) + ((ALPHA_LEN - 3) << 10)> groups3_sfs;
 // hashes bitset with three bits set
 // max value is 2 + 27 * 1024
 inline unsigned int hash3(bitset x) {
