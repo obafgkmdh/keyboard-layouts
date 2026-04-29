@@ -2,16 +2,18 @@
 #include <fstream>
 #include <string>
 #include <cstdlib>
+#include <cstdint>
 #include <algorithm>
 #include <vector>
+#include <array>
 
 #define pack(a, b) (((paired)(a) << 32) | (paired)(b))
 #define unpack1(a) ((a) >> 32)
 #define unpack2(a) ((a) & 0xffffffff)
 
-typedef unsigned int bitset;
-typedef unsigned int count;
-typedef unsigned long long paired;
+typedef uint32_t bitset;
+typedef uint32_t count;
+typedef uint64_t paired;
 
 constexpr unsigned int ALPHA_LEN = 30;
 constexpr bitset ALPHA_SHIFT = (1 << ALPHA_LEN);
@@ -37,6 +39,7 @@ inline unsigned int clz(bitset x) {
 	return __builtin_clz(x);
 }
 
+// precompute n choose k
 unsigned int combs[ALPHA_LEN][10] = {0};
 void computeCombs() {
 	for (int i = 0; i < ALPHA_LEN; i++) {
@@ -47,8 +50,9 @@ void computeCombs() {
 	}
 }
 
+// perfect hash of 27-bit bitset of 9 bits set
 unsigned int hash9(bitset x) {
-	unsigned int h = 4686824;
+	unsigned int h = 4686824; // (27 choose 9) - 1
 	unsigned int n = ALPHA_LEN;
 	for (int i = 0; i < 9; i++) {
 		unsigned int k = ctz(x) + 1;
@@ -59,12 +63,14 @@ unsigned int hash9(bitset x) {
 	return h;
 }
 
+// hashes bitset with one or two bits set (usually 2)
+// ctz is at most 29, so max output is 29 * 32 + 2
 inline unsigned int hash2(bitset x) {
 	return clz(x) | (ctz(x) << 5);
 }
 
-std::vector<count> bigrams(928);
-std::vector<count> skipgrams(928);
+std::vector<count> bigrams((ALPHA_LEN - 1) * 32 + (33 - ALPHA_LEN));
+std::vector<count> skipgrams((ALPHA_LEN - 1) * 32 + (33 - ALPHA_LEN));
 count totalBigrams, totalSkipgrams;
 count cutoffSfb, cutoffSfs;
 
@@ -114,12 +120,18 @@ void loadCorpus(std::string fn) {
 	corpus.close();
 }
 
-std::vector<std::vector<paired>> groups3(32);
-std::vector<count> groups3_sfs(28672);
+// sfb of each group of 3, bucketed by first char in each group
+std::array<std::vector<paired>, ALPHA_LEN> groups3;
+// sfs of each group of 3
+std::vector<count> groups3_sfs((33 - ALPHA_LEN) + ((ALPHA_LEN - 3) << 10));
+// hashes bitset with three bits set
+// max value is 2 + 27 * 1024
 inline unsigned int hash3(bitset x) {
 	return clz(x) | (ctz(x) << 5) | (ctz(x >> (ctz(x) + 1)) << 10);
 }
 
+// find all groups of 3 below cutoff sfb and sfs
+// store results in groups3 and groups3_sfs
 void findGroups3() {
 	count sfb2, sfs2, sfb3, sfs3;
 	for (bitset i = 1; i < (ALPHA_SHIFT >> 2); i <<= 1) {
@@ -138,6 +150,7 @@ void findGroups3() {
 	}
 }
 
+// groups of 6 below cutoff sfb and sfs, bucketed by number of sfbs, sorted by sfs
 std::vector<std::vector<paired>> groups6;
 void groups6Helper(unsigned int n, bitset start, bitset bits, count sfb, count sfs) {
 	if (n == 0) {
@@ -173,7 +186,8 @@ void findGroups6() {
 	}
 }
 
-std::vector<std::vector<std::pair<paired, paired>>> groups9(4686825);
+// find groups of 9 below cutoff sfb and sfs, not using the first 3 letters
+std::array<std::vector<std::pair<paired, paired>>, 4686825> groups9;
 count g9count = 0;
 void findGroups3N(unsigned int n, bitset start, bitset bits, count sfb, count sfs, paired acc) {
 	count sfb2, sfs2, sfb3, sfs3;
@@ -247,7 +261,8 @@ void findLayouts(bitset bits, count sfb, count sfs, int n) {
 	count new_sfb, new_sfs, sfb9, sfs9;
 	bitset b;
 	for (const auto& p : groups3[ctz(~bits)]) {
-		if (sfb + unpack1(p) > cutoffSfb) { break; }
+		new_sfb = sfb + unpack1(p);
+		if (new_sfb > cutoffSfb) { break; }
 		if ((p & bits) ||
 			(new_sfs = sfs + groups3_sfs[
 				hash3(bits_arr[n] = unpack2(p))
@@ -257,7 +272,8 @@ void findLayouts(bitset bits, count sfb, count sfs, int n) {
 			for (const auto& result : groups9[hash9(b ^ ALPHA_MASK)]) {
 				sfb9 = unpack1(result.first);
 				sfs9 = unpack2(result.first);
-				if (sfb + unpack1(p) + sfb9 <= cutoffSfb && new_sfs + sfs9 <= cutoffSfs) {
+				if (new_sfb + sfb9 > cutoffSfb) { break; }
+				if (new_sfs + sfs9 <= cutoffSfs) {
 					write_bits(unpack1(result.second), unpack2(result.second));
 					total += 1;
 				}
@@ -269,15 +285,15 @@ void findLayouts(bitset bits, count sfb, count sfs, int n) {
 }
 
 int main(int argc, char* argv[]) {
-	if (argc < 2) {
-		std::cerr << "usage: " << argv[0] << " corpus_file out_file" << std::endl;
+	if (argc < 4) {
+		std::cerr << "usage: " << argv[0] << " corpus_file out_file sfb_cutoff sfs_cutoff" << std::endl;
 		return 1;
 	}
 	loadCorpus(argv[1]);
 	std::cout << "loaded " << totalBigrams << " bigrams, " << totalSkipgrams << " skipgrams" << std::endl;
 	
-	cutoffSfb = totalBigrams * 1 / 100;
-	cutoffSfs = totalSkipgrams * 7 / 100;
+	cutoffSfb = totalBigrams * atof(argv[3]);
+	cutoffSfs = totalSkipgrams * atof(argv[4]);
 	
 	findGroups3();
 	for (auto& kv : groups3) { std::sort(kv.begin(), kv.end()); }
@@ -290,6 +306,11 @@ int main(int argc, char* argv[]) {
 	
 	computeCombs();
 	findGroups3N(9, 1 << 2, 0, 0, 0, 0);
+	for (auto& v : groups9) {
+		std::sort(v.begin(), v.end(), [](std::pair<paired, paired> const &a, std::pair<paired, paired> const &b){
+			return a.first < b.first;
+		});
+	}
 	std::cout << "found 3-3-3-groups " << g9count << std::endl;
 	
 	unsigned long long found = 0, done = 0;
@@ -340,7 +361,6 @@ int main(int argc, char* argv[]) {
 			}
 		}
 		std::cout << "\r" << (100 * done / (double) n_iterations) << "%, found " << total;
-		//if (done > 100000) { break; }
 	}
 	outfile.close();
 	std::cout << "\ntotal: " << total << std::endl;
