@@ -36,11 +36,13 @@ if len(sys.argv) > 2:
                 if prev != 0:
                     totalBigrams += 1
                     bigrams[c, prev] += 1
-                    bigrams[prev, c] += 1
+                    if prev != c:
+                        bigrams[prev, c] += 1
                 if prev2 != 0:
                     totalSkipgrams += 1
                     skipgrams[c, prev2] += 1
-                    skipgrams[prev2, c] += 1
+                    if prev2 != c:
+                        skipgrams[prev2, c] += 1
                 prev2 = prev
                 prev = c
 
